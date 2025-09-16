@@ -1,11 +1,5 @@
 require('dotenv').config(); // For local .env loading
 
-// Polyfill for EventTarget (required for Node.js local dev - keep if testing locally)
-if (typeof globalThis !== 'undefined') {
-  const { EventTarget, Event } = require('event-target-polyfill');
-  globalThis.EventTarget = EventTarget;
-  globalThis.Event = Event;
-}
 
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
