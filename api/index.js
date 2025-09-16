@@ -1,17 +1,23 @@
 require('dotenv').config(); // For local .env loading
 
+// Polyfill for EventTarget (required for Node.js local dev - keep if testing locally)
+if (typeof globalThis !== 'undefined') {
+  const { EventTarget, Event } = require('event-target-polyfill');
+  globalThis.EventTarget = EventTarget;
+  globalThis.Event = Event;
+}
+
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
-const { createClient } = require('@vercel/kv');
+const fs = require('fs');
+const path = require('path');
 
 // Environment variables
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const KV_REST_API_URL = process.env.KV_REST_API_URL;
-const KV_REST_API_TOKEN = process.env.KV_REST_API_TOKEN;
 
-if (!BOT_TOKEN || !WEBHOOK_URL || !KV_REST_API_URL || !KV_REST_API_TOKEN) {
-  throw new Error('Missing required env vars: BOT_TOKEN, WEBHOOK_URL, KV_REST_API_URL, KV_REST_API_TOKEN');
+if (!BOT_TOKEN || !WEBHOOK_URL) {
+  throw new Error('Missing required env vars: BOT_TOKEN, WEBHOOK_URL');
 }
 
 const app = express();
@@ -20,53 +26,59 @@ app.use(express.json()); // Parse JSON for POST bodies
 // Initialize bot (polling initially, switch to webhook after set)
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// Initialize KV client with standard vars
-const kv = createClient({
-  url: KV_REST_API_URL,
-  token: KV_REST_API_TOKEN,
-});
+// File-based storage for chats
+const CHATS_FILE = path.join(__dirname, 'chats.json');
 
-// Helper: Store individual chat details
-async function storeChatId(chatId, chatType) {
-  if (chatType === 'group' || chatType === 'supergroup' || chatType === 'private') {
-    const key = `chat:${chatId}`;
-    await kv.set(key, { chatId, type: chatType, addedAt: new Date().toISOString() });
-    console.log(`Stored chat ${chatId} (${chatType})`);
+// Load chats from file (or default to empty array)
+let chatIds = [];
+if (fs.existsSync(CHATS_FILE)) {
+  try {
+    chatIds = JSON.parse(fs.readFileSync(CHATS_FILE, 'utf8'));
+  } catch (err) {
+    console.error('Error loading chats.json:', err);
+    chatIds = [];
   }
 }
 
-// Helper: Get all stored chat IDs (comma-separated string for simplicity)
-async function getAllChatIds() {
-  const allChatsKey = 'all_chats';
-  const allIdsStr = await kv.get(allChatsKey) || '';
-  return allIdsStr ? allIdsStr.split(',') : [];
+// Helper: Save chats to file
+function saveChats() {
+  try {
+    fs.writeFileSync(CHATS_FILE, JSON.stringify(chatIds, null, 2));
+    console.log('Chats saved to file');
+  } catch (err) {
+    console.error('Error saving chats:', err);
+  }
 }
 
-// Helper: Add chat to all_chats list
-async function addToAllChats(chatId) {
-  const allChatsKey = 'all_chats';
-  let allIdsStr = await kv.get(allChatsKey) || '';
+// Helper: Add chat (manual or from events)
+function addChat(chatId) {
   const chatIdStr = chatId.toString();
-  if (!allIdsStr.includes(chatIdStr)) {
-    allIdsStr += (allIdsStr ? ',' : '') + chatIdStr;
-    await kv.set(allChatsKey, allIdsStr);
+  if (!chatIds.includes(chatIdStr)) {
+    chatIds.push(chatIdStr);
+    saveChats();
+    console.log(`Added chat ${chatId}`);
   }
 }
 
-// Helper: Remove invalid chat from all_chats
-async function removeFromAllChats(chatIdStr) {
-  const allChatsKey = 'all_chats';
-  let allIdsStr = await kv.get(allChatsKey) || '';
-  allIdsStr = allIdsStr.replace(new RegExp(`,?${chatIdStr}(,|$)`, 'g'), '');
-  await kv.set(allChatsKey, allIdsStr || '');
+// Helper: Get all chats
+function getAllChatIds() {
+  return chatIds;
+}
+
+// Helper: Remove invalid chat
+function removeChat(chatIdStr) {
+  chatIds = chatIds.filter(id => id !== chatIdStr);
+  saveChats();
+  console.log(`Removed chat ${chatIdStr}`);
 }
 
 // Bot event: New chat members (auto-register when added to group)
 bot.on('new_chat_members', async (msg) => {
   const chatId = msg.chat.id;
   const chatType = msg.chat.type;
-  await storeChatId(chatId, chatType);
-  await addToAllChats(chatId);
+  if (chatType === 'group' || chatType === 'supergroup' || chatType === 'private') {
+    addChat(chatId);
+  }
   // Welcome message
   try {
     await bot.sendMessage(chatId, 'Hi! I\'m your Jira Daily Bot. I\'ll send task reports daily. Use /start for help or /report for manual.');
@@ -78,9 +90,7 @@ bot.on('new_chat_members', async (msg) => {
 // Bot event: /start command (register private chats)
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  const chatType = msg.chat.type;
-  await storeChatId(chatId, chatType);
-  await addToAllChats(chatId);
+  addChat(chatId);
   bot.sendMessage(chatId, 'Bot started! Add me to groups for daily Jira reports. /report for manual trigger.');
 });
 
@@ -101,14 +111,14 @@ app.post('/send-report', async (req, res) => {
   }
 
   try {
-    const chatIds = await getAllChatIds();
-    if (chatIds.length === 0) {
+    const chatIdsArray = getAllChatIds();
+    if (chatIdsArray.length === 0) {
       console.log('No registered chats');
       return res.json({ sentTo: 0, totalChats: 0 });
     }
 
     let sentCount = 0;
-    for (const chatIdStr of chatIds) {
+    for (const chatIdStr of chatIdsArray) {
       const chatId = parseInt(chatIdStr);
       try {
         await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
@@ -118,11 +128,11 @@ app.post('/send-report', async (req, res) => {
         console.error(`Failed to send to ${chatId}: ${err.message}`);
         // Auto-remove invalid chats (e.g., bot kicked)
         if (err.message.includes('chat not found') || err.message.includes('blocked by user')) {
-          await removeFromAllChats(chatIdStr);
+          removeChat(chatIdStr);
         }
       }
     }
-    res.json({ sentTo: sentCount, totalChats: chatIds.length });
+    res.json({ sentTo: sentCount, totalChats: chatIdsArray.length });
   } catch (err) {
     console.error('Broadcast error:', err);
     res.status(500).json({ error: 'Failed to send reports' });
@@ -152,6 +162,15 @@ app.use((req, res) => {
   console.log(`Unhandled request: ${req.method} ${req.path}`);
   res.status(404).json({ error: 'Route not found' });
 });
+
+// Start local server for dev (skip in Vercel/production)
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Local server running on http://localhost:${PORT}`);
+    console.log('Bot polling active—add to a group to test events.');
+  });
+}
 
 // Serverless export for Vercel
 module.exports = app;
