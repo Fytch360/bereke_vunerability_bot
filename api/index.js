@@ -7,7 +7,7 @@ app.use(express.json()); // Parse JSON bodies for n8n POST
 
 // Environment variables (set in Vercel)
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const WEBHOOK_URL = process.env.WEBHOOK_URL; // e.g., https://your-vercel-app.vercel.app/webhook
+const WEBHOOK_URL = 'https://bereke-vunerability-bot.vercel.app/'; // e.g., https://your-vercel-app.vercel.app/webhook
 const KV_URL = process.env.KV_URL; // Vercel KV Redis URL
 const PORT = process.env.PORT || 3000;
 
