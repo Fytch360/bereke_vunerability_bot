@@ -26,27 +26,31 @@ app.use(express.json()); // Parse JSON for POST bodies
 // Initialize bot (polling initially, switch to webhook after set)
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// File-based storage for chats
-const CHATS_FILE = path.join(__dirname, 'chats.json');
+// File-based storage for chats (use /tmp for Vercel writability)
+const CHATS_FILE = '/tmp/chats.json';  // Writable dir on Vercel/local
 
 // Load chats from file (or default to empty array)
 let chatIds = [];
 if (fs.existsSync(CHATS_FILE)) {
   try {
     chatIds = JSON.parse(fs.readFileSync(CHATS_FILE, 'utf8'));
+    console.log(`Loaded ${chatIds.length} chats from file`);
   } catch (err) {
-    console.error('Error loading chats.json:', err);
+    console.error('Error loading chats.json:', err.message);
     chatIds = [];
   }
+} else {
+  console.log('No chats.json found—starting empty');
 }
 
-// Helper: Save chats to file
+// Helper: Save chats to file (graceful—no throw)
 function saveChats() {
   try {
     fs.writeFileSync(CHATS_FILE, JSON.stringify(chatIds, null, 2));
     console.log('Chats saved to file');
   } catch (err) {
-    console.error('Error saving chats:', err);
+    console.error('Error saving chats (non-fatal):', err.message);
+    // Don't throw—log and continue
   }
 }
 
@@ -111,6 +115,7 @@ app.post('/send-report', async (req, res) => {
   }
 
   try {
+    console.log('Starting broadcast—current chats:', chatIds.length);  // Debug log
     const chatIdsArray = getAllChatIds();
     if (chatIdsArray.length === 0) {
       console.log('No registered chats');
@@ -120,6 +125,7 @@ app.post('/send-report', async (req, res) => {
     let sentCount = 0;
     for (const chatIdStr of chatIdsArray) {
       const chatId = parseInt(chatIdStr);
+      console.log(`Attempting send to ${chatId}`);  // Debug per chat
       try {
         await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         sentCount++;
@@ -132,9 +138,10 @@ app.post('/send-report', async (req, res) => {
         }
       }
     }
+    console.log(`Broadcast complete: ${sentCount} sent`);  // Debug end
     res.json({ sentTo: sentCount, totalChats: chatIdsArray.length });
   } catch (err) {
-    console.error('Broadcast error:', err);
+    console.error('Broadcast error (full stack):', err.message, err.stack);  // Detailed log
     res.status(500).json({ error: 'Failed to send reports' });
   }
 });
