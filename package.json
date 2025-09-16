@@ -1,15 +1,16 @@
 {
-  "name": "jira-telegram-bot",
+  "name": "bereke-vunerability-bot",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "api/index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node api/index.js",
+    "dev": "dotenv -e .env -- node api/index.js"
   },
   "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
     "@vercel/kv": "^3.0.0",
     "express": "^4.19.2",
-    "node-telegram-bot-api": "^0.64.0",
-    "dotenv": "^17.2.2"
+    "dotenv": "^16.4.5"
   },
   "engines": {
     "node": ">=18"
