@@ -99,6 +99,7 @@ bot.onText(/\/report/, (msg) => {
 });
 
 // API: POST /send-report (from n8n: { "message": "formatted list" })
+// API: POST /send-report (from n8n: { "message": "formatted list" })
 app.post('/send-report', async (req, res) => {
   console.log('POST /send-report received:', req.body, 'Method:', req.method, 'Path:', req.path);
   
@@ -106,6 +107,23 @@ app.post('/send-report', async (req, res) => {
   if (!message) {
     console.log('Missing message in body');
     return res.status(400).json({ error: 'No message provided' });
+  }
+
+  // Helper: Split long message into chunks under 4096 chars (Telegram limit)
+  function splitMessage(text, maxLength = 4096) {
+    const chunks = [];
+    let current = '';
+    const lines = text.split('\n');
+    for (const line of lines) {
+      if ((current + line + '\n').length > maxLength) {
+        if (current) chunks.push(current.trim());
+        current = line + '\n';
+      } else {
+        current += line + '\n';
+      }
+    }
+    if (current) chunks.push(current.trim());
+    return chunks;
   }
 
   try {
@@ -117,13 +135,22 @@ app.post('/send-report', async (req, res) => {
     }
 
     let sentCount = 0;
+    let totalChunksSent = 0;
     for (const chatIdStr of chatIdsArray) {
       const chatId = parseInt(chatIdStr);
       console.log(`Attempting send to ${chatId}`);  // Debug per chat
       try {
-        await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-        sentCount++;
-        console.log(`Sent to ${chatId}`);
+        const chunks = splitMessage(message);
+        console.log(`Splitting into ${chunks.length} chunks for ${chatId}`);
+        for (let i = 0; i < chunks.length; i++) {
+          await bot.sendMessage(chatId, chunks[i], { parse_mode: 'Markdown' });
+          totalChunksSent++;
+          console.log(`Sent chunk ${i + 1}/${chunks.length} to ${chatId}`);
+          // Small delay to avoid rate limits (30 msgs/sec)
+          if (i < chunks.length - 1) await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        sentCount++;  // Count as sent if all chunks succeed
+        console.log(`Full report sent to ${chatId} (${chunks.length} chunks)`);
       } catch (err) {
         console.error(`Failed to send to ${chatId}: ${err.message}`);
         // Auto-remove invalid chats (e.g., bot kicked)
@@ -132,8 +159,8 @@ app.post('/send-report', async (req, res) => {
         }
       }
     }
-    console.log(`Broadcast complete: ${sentCount} sent`);  // Debug end
-    res.json({ sentTo: sentCount, totalChats: chatIdsArray.length });
+    console.log(`Broadcast complete: ${sentCount} chats, ${totalChunksSent} chunks`);  // Debug end
+    res.json({ sentTo: sentCount, totalChats: chatIdsArray.length, chunksSent: totalChunksSent });
   } catch (err) {
     console.error('Broadcast error (full stack):', err.message, err.stack);  // Detailed log
     res.status(500).json({ error: 'Failed to send reports' });
