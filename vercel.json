@@ -1,9 +1,4 @@
 {
-  "functions": {
-    "api/index.js": {
-      "runtime": "nodejs18.x"
-    }
-  },
   "rewrites": [
     { "source": "/send-report", "destination": "/api/index.js" },
     { "source": "/set-webhook", "destination": "/api/index.js" },
