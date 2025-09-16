@@ -9,8 +9,7 @@
   "dependencies": {
     "node-telegram-bot-api": "^0.64.0",
     "express": "^4.19.2",
-    "dotenv": "^16.4.5",
-    "event-target-polyfill": "^0.0.3"
+    "dotenv": "^16.4.5"
   },
   "engines": {
     "node": ">=18"
